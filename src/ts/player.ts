@@ -248,11 +248,15 @@ class DPlayer {
         }
 
         if (!fromNative) {
-            const playFunc = (this.type === 'mpegts' && this.plugins.mpegts && this.plugins.mpegts.play.bind(this.plugins.mpegts)) || this.video.play.bind(this.video);
+            const targetVideo = this.video;
+            const playFunc = (this.type === 'mpegts' && this.plugins.mpegts && this.plugins.mpegts.play.bind(this.plugins.mpegts)) || targetVideo.play.bind(targetVideo);
             const playedPromise = Promise.resolve(playFunc());
             playedPromise
                 .catch(() => {
-                    this.pause();
+                    // Ignore a rejection from the video replaced by a quality switch.
+                    if (this.video === targetVideo) {
+                        this.pause();
+                    }
                 })
                 .then(() => {
                     // pass
@@ -747,6 +751,9 @@ class DPlayer {
 
                         // Conversion failures use DPlayer's existing notice surface while callers can observe the plugin directly
                         mpeg2toh264Player.addEventListener('error', (event) => {
+                            if (this.video !== video || this.plugins.mpeg2toh264 !== mpeg2toh264Player) {
+                                return;
+                            }
                             this.notice(`Error: ${event.detail.error.message}`, undefined, undefined, '#FF6F6A');
                         });
 
@@ -1023,6 +1030,11 @@ class DPlayer {
 
         for (let i = 0; i < this.events.videoEvents.length; i++) {
             video.addEventListener(this.events.videoEvents[i], (event) => {
+                // A quality switch keeps the previous video until the replacement can play.
+                // Do not forward late events from that video to handlers for the replacement.
+                if (this.video !== video) {
+                    return;
+                }
                 this.events.trigger(this.events.videoEvents[i], event);
             });
         }
