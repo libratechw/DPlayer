@@ -42,6 +42,8 @@ declare class DPlayer {
     plugins: DPlayerType.Plugins;
     prevVideoCurrentTime: number;
     prevVideo: HTMLVideoElement | null;
+    private videoEventsInitialized;
+    private qualityCanplayHandler;
     quality: DPlayerType.VideoQualityInternal | null;
     qualityIndex: number | null;
     switchingQuality: boolean;
@@ -109,6 +111,7 @@ declare class DPlayer {
     }, danmakuAPI?: DPlayerType.Danmaku | boolean, remember?: boolean, apiBackend?: DPlayerType.APIBackend): void;
     initDanmaku(danmakuAPI?: DPlayerType.Danmaku | boolean, apiBackend?: DPlayerType.APIBackend): void;
     initMSE(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void;
+    private initVideoEvents;
     initVideo(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void;
     /**
      * Apply one of DPlayer's two broadcast audio choices to the active media backend
