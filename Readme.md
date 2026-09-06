@@ -4,7 +4,7 @@
 <h1 align="center">DPlayer</h1>
 
 > [!WARNING]
-> この branch は iOS Original 再生の診断統合専用です。画質切替と media backend の世代・破棄・作成を mpeg2toh264 の lifecycle trace へ記録します。成功した画質切替は、そのswitch generationに結び付いたopaque tokenだけを解決済みにし、履歴は通常のリング容量内に残します。通常の復旧動作を変更せず、branch 全体を公開 API の提案として取り込むことは想定していません。
+> この branch は iOS Original 再生の診断統合専用です。画質切替と media backend の世代・破棄・作成を mpeg2toh264 の lifecycle trace へ記録します。画質切替の成功、video error、別videoへの置換、backendの明示破棄、DPlayer破棄では、終了理由を記録してから、そのswitch generationに結び付いたopaque tokenだけを解決済みにします。履歴は通常のリング容量内に残り、errorより前にmpeg2toh264がsnapshotを凍結済みならtokenの解決は凍結済みsnapshotを変更しません。通常の復旧動作を変更せず、branch 全体を公開 API の提案として取り込むことは想定していません。
 
 > 🍭 Wow, such a lovely HTML5 danmaku video player
 

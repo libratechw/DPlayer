@@ -436,6 +436,7 @@ class DPlayer {
         remember = false,
         apiBackend: DPlayerType.APIBackend = defaultApiBackend,
     ): void {
+        this.cancelDiagnosticQualitySwitch('switch-video');
         this.pause();
         const seek = this.video.currentTime;
         const speed = this.video.playbackRate;
@@ -560,9 +561,53 @@ class DPlayer {
         }
     }
 
+    private finishDiagnosticQualitySwitch(
+        qualitySwitch: DiagnosticQualitySwitch | null,
+        event: 'dplayer-quality-switch-end' | 'dplayer-quality-switch-error' | 'dplayer-quality-switch-cancel',
+        detail: Readonly<Record<string, DiagnosticLifecycleValue>> = {},
+    ): DPlayerType.Plugins['mpeg2toh264'] {
+        const owner = this.plugins.mpeg2toh264 ?? qualitySwitch?.criticalOwner;
+        if (qualitySwitch === null) {
+            return owner;
+        }
+        this.recordMpeg2ToH264Lifecycle(
+            owner,
+            event,
+            {
+                ...detail,
+                dplayerVideoGeneration: this.videoGeneration,
+                qualitySwitchGeneration: qualitySwitch.generation,
+                currentVideo: true,
+            },
+        );
+        // The mpeg owner only releases this exact entry. A journal already
+        // frozen by a synchronous fatal error treats this as a harmless no-op.
+        this.resolveMpeg2ToH264Lifecycle(
+            qualitySwitch.criticalOwner,
+            qualitySwitch.criticalToken,
+        );
+        if (this.activeQualitySwitch === qualitySwitch) {
+            this.activeQualitySwitch = null;
+        }
+        return owner;
+    }
+
+    private cancelDiagnosticQualitySwitch(reason: string): void {
+        this.finishDiagnosticQualitySwitch(
+            this.activeQualitySwitch,
+            'dplayer-quality-switch-cancel',
+            { reason },
+        );
+    }
+
     initMSE(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void {
+        const isActiveQualityReplacement =
+            this.switchingQuality && this.activeQualitySwitch !== null && this.video === video;
+        if (!isActiveQualityReplacement) {
+            this.cancelDiagnosticQualitySwitch('media-backend-replacement');
+        }
         // A video element has exactly one media backend, so switching formats releases the previous owner first
-        this.destroyMediaBackend();
+        this.releaseMediaBackend();
         this.type = type;
 
         if (this.options.video.customType && this.options.video.customType[type]) {
@@ -1084,24 +1129,21 @@ class DPlayer {
             }
             // quality switching failed
             if (this.switchingQuality) {
-                this.recordMpeg2ToH264Lifecycle(
-                    this.plugins.mpeg2toh264,
+                const failedSwitch = this.activeQualitySwitch;
+                const failureLifecycleOwner = this.finishDiagnosticQualitySwitch(
+                    failedSwitch,
                     'dplayer-quality-switch-error',
                     {
-                        dplayerVideoGeneration: this.videoGeneration,
-                        qualitySwitchGeneration: this.activeQualitySwitch?.generation ?? 0,
                         mediaErrorCode: this.video.error?.code ?? null,
-                        currentVideo: true,
                     },
-                    { critical: true },
                 );
                 if (this.prevVideo !== null) {
                     this.recordMpeg2ToH264Lifecycle(
-                        this.plugins.mpeg2toh264,
+                        failureLifecycleOwner,
                         'dplayer-previous-video-remove',
                         {
                             dplayerVideoGeneration: this.videoGeneration,
-                            qualitySwitchGeneration: this.activeQualitySwitch?.generation ?? 0,
+                            qualitySwitchGeneration: failedSwitch?.generation ?? 0,
                             reason: 'quality-switch-error',
                         },
                     );
@@ -1111,7 +1153,6 @@ class DPlayer {
                 this.prevVideo = null;
                 this.switchingQuality = false;
                 this.events.trigger('quality_end');
-                this.activeQualitySwitch = null;
             }
             if (this.tran && this.notice && this.type !== 'webtorrent') {
                 this.notice(this.tran('Video load failed'), -1, undefined, '#FF6F6A');
@@ -1297,7 +1338,12 @@ class DPlayer {
         this.video = videoEle;
         // Preserve the selected channel until the replacement backend publishes enough audio metadata
         this.pendingAudio = this.setting.currentAudio;
-        this.initVideo(this.video, this.quality.type || this.options.video.type);
+        try {
+            this.initVideo(this.video, this.quality.type || this.options.video.type);
+        } catch (error) {
+            this.cancelDiagnosticQualitySwitch('quality-switch-init-error');
+            throw error;
+        }
         if (!this.options.live) {
             this.seek(this.prevVideoCurrentTime);
         }
@@ -1363,23 +1409,11 @@ class DPlayer {
 
                 this.container.classList.remove('dplayer-loading');
                 const completedSwitch = this.activeQualitySwitch;
-                this.recordMpeg2ToH264Lifecycle(
-                    this.plugins.mpeg2toh264,
+                this.finishDiagnosticQualitySwitch(
+                    completedSwitch,
                     'dplayer-quality-switch-end',
-                    {
-                        dplayerVideoGeneration: this.videoGeneration,
-                        qualitySwitchGeneration: completedSwitch?.generation ?? 0,
-                        currentVideo: true,
-                    },
                 );
-                if (completedSwitch !== null) {
-                    this.resolveMpeg2ToH264Lifecycle(
-                        completedSwitch.criticalOwner,
-                        completedSwitch.criticalToken,
-                    );
-                }
                 this.events.trigger('quality_end');
-                this.activeQualitySwitch = null;
             }
         };
         this.on('canplay', this.qualityCanplayHandler);
@@ -1463,6 +1497,11 @@ class DPlayer {
      * Release the media backend currently attached to the video element
      */
     destroyMediaBackend(): void {
+        this.cancelDiagnosticQualitySwitch('media-backend-abandon');
+        this.releaseMediaBackend();
+    }
+
+    private releaseMediaBackend(): void {
         // Clear the callback before running plugin code so reentrant teardown remains idempotent
         const mediaBackendDestroy = this.mediaBackendDestroy;
         this.mediaBackendDestroy = null;
@@ -1474,6 +1513,7 @@ class DPlayer {
      * @param keepContainerInnerHTML If true, do not clean the innerHTML of the container
      */
     destroy(keepContainerInnerHTML = false): void {
+        this.cancelDiagnosticQualitySwitch('player-destroy');
         instances.splice(instances.indexOf(this), 1);
         this.pause();
         document.removeEventListener('click', this.docClickFun, true);
