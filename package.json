@@ -32,6 +32,7 @@
         "build": "cross-env NODE_ENV=production webpack build --config webpack/prod.config.js --progress",
         "dev": "cross-env NODE_ENV=development webpack serve --config webpack/dev.config.js",
         "test": "eslint src",
+        "test:diagnostic-lifecycle": "node tools/test-diagnostic-lifecycle.mjs",
         "type-check": "tsc --noEmit",
         "format": "eslint \"**/*.ts\" --fix",
         "format:check": "eslint \"**/*.ts\"",

@@ -27,6 +27,37 @@ import type { PlayerState, PrivateStream, Progress, Stats } from 'mpeg2toh264/pl
 let index = 0;
 const instances: DPlayer[] = [];
 
+type DiagnosticLifecycleValue = string | number | boolean | null;
+type DiagnosticLifecycleToken = Readonly<object>;
+type DiagnosticMpeg2TsPlayer = {
+    recordDiagnosticLifecycle?: (
+        event: string,
+        detail?: Readonly<Record<string, DiagnosticLifecycleValue>>,
+        options?: { readonly at?: number; readonly critical?: boolean },
+    ) => DiagnosticLifecycleToken | null;
+    resolveDiagnosticLifecycle?: (token: DiagnosticLifecycleToken) => void;
+};
+
+interface DiagnosticLifecycleRecord {
+    readonly recorded: boolean;
+    readonly criticalToken: DiagnosticLifecycleToken | null;
+    readonly owner: DPlayerType.Plugins['mpeg2toh264'];
+}
+
+interface DiagnosticQualitySwitch {
+    readonly generation: number;
+    readonly fromQualityIndex: number | null;
+    readonly toQualityIndex: number;
+    readonly startedAt: number;
+    recordedOnMpeg: boolean;
+    criticalToken: DiagnosticLifecycleToken | null;
+    criticalOwner: DPlayerType.Plugins['mpeg2toh264'];
+}
+
+function diagnosticNow(): number {
+    return performance.timeOrigin + performance.now();
+}
+
 declare let window: DPlayerType.WindowExtend;
 
 class DPlayer {
@@ -60,6 +91,10 @@ class DPlayer {
     prevVideo: HTMLVideoElement | null = null;
     private videoEventsInitialized = false;
     private qualityCanplayHandler: (() => void) | null = null;
+    private readonly diagnosticInstance = index;
+    private videoGeneration = 0;
+    private qualitySwitchGeneration = 0;
+    private activeQualitySwitch: DiagnosticQualitySwitch | null = null;
     quality: DPlayerType.VideoQualityInternal | null = null;
     qualityIndex: number | null = null;
     switchingQuality = false;
@@ -485,6 +520,46 @@ class DPlayer {
         this.comment = new Comment(this);
     }
 
+    private recordMpeg2ToH264Lifecycle(
+        player: DPlayerType.Plugins['mpeg2toh264'],
+        event: string,
+        detail: Readonly<Record<string, DiagnosticLifecycleValue>>,
+        options: { readonly at?: number; readonly critical?: boolean } = {},
+    ): DiagnosticLifecycleRecord {
+        try {
+            const record = (player as (DiagnosticMpeg2TsPlayer & EventTarget) | undefined)?.recordDiagnosticLifecycle;
+            if (record === undefined) {
+                return { recorded: false, criticalToken: null, owner: player };
+            }
+            const result = record.call(
+                player,
+                event,
+                { dplayerInstance: this.diagnosticInstance, ...detail },
+                options,
+            );
+            const criticalToken = typeof result === 'object' && result !== null ? result : null;
+            return { recorded: true, criticalToken, owner: player };
+        } catch {
+            // Optional diagnostics must never change quality-switch behaviour.
+            return { recorded: false, criticalToken: null, owner: player };
+        }
+    }
+
+    private resolveMpeg2ToH264Lifecycle(
+        owner: DPlayerType.Plugins['mpeg2toh264'],
+        token: DiagnosticLifecycleToken | null,
+    ): void {
+        try {
+            if (token === null) {
+                return;
+            }
+            const resolve = (owner as (DiagnosticMpeg2TsPlayer & EventTarget) | undefined)?.resolveDiagnosticLifecycle;
+            resolve?.call(owner, token);
+        } catch {
+            // Optional diagnostics must never change quality-switch behaviour.
+        }
+    }
+
     initMSE(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void {
         // A video element has exactly one media backend, so switching formats releases the previous owner first
         this.destroyMediaBackend();
@@ -750,6 +825,27 @@ class DPlayer {
                             },
                         );
                         this.plugins.mpeg2toh264 = mpeg2toh264Player;
+                        const backendVideoGeneration = this.videoGeneration;
+                        const qualitySwitch = this.activeQualitySwitch;
+                        const backendRecord = this.recordMpeg2ToH264Lifecycle(
+                            mpeg2toh264Player,
+                            'dplayer-backend-created',
+                            {
+                                dplayerVideoGeneration: backendVideoGeneration,
+                                qualitySwitchGeneration: qualitySwitch?.generation ?? 0,
+                                fromQualityIndex: qualitySwitch?.fromQualityIndex ?? null,
+                                toQualityIndex: qualitySwitch?.toQualityIndex ?? this.qualityIndex,
+                                currentVideo: this.video === video,
+                            },
+                            { critical: qualitySwitch !== null && !qualitySwitch.recordedOnMpeg },
+                        );
+                        if (qualitySwitch !== null && backendRecord.recorded) {
+                            qualitySwitch.recordedOnMpeg = true;
+                            if (backendRecord.criticalToken !== null) {
+                                qualitySwitch.criticalToken = backendRecord.criticalToken;
+                                qualitySwitch.criticalOwner = backendRecord.owner;
+                            }
+                        }
 
                         // Conversion failures use DPlayer's existing notice surface while callers can observe the plugin directly
                         mpeg2toh264Player.addEventListener('error', (event) => {
@@ -834,6 +930,15 @@ class DPlayer {
 
                         // Keep Worker, MSE, and subtitle resources under the same backend lifetime
                         this.mediaBackendDestroy = () => {
+                            this.recordMpeg2ToH264Lifecycle(
+                                mpeg2toh264Player,
+                                'dplayer-backend-destroy',
+                                {
+                                    dplayerVideoGeneration: backendVideoGeneration,
+                                    qualitySwitchGeneration: this.activeQualitySwitch?.generation ?? 0,
+                                    currentVideo: this.video === video,
+                                },
+                            );
                             mpeg2toh264Player.removeEventListener('stats', updateStats);
                             mpeg2toh264Player.removeEventListener('statechange', updateState);
                             mpeg2toh264Player.removeEventListener('progress', updateProgress);
@@ -979,13 +1084,34 @@ class DPlayer {
             }
             // quality switching failed
             if (this.switchingQuality) {
+                this.recordMpeg2ToH264Lifecycle(
+                    this.plugins.mpeg2toh264,
+                    'dplayer-quality-switch-error',
+                    {
+                        dplayerVideoGeneration: this.videoGeneration,
+                        qualitySwitchGeneration: this.activeQualitySwitch?.generation ?? 0,
+                        mediaErrorCode: this.video.error?.code ?? null,
+                        currentVideo: true,
+                    },
+                    { critical: true },
+                );
                 if (this.prevVideo !== null) {
+                    this.recordMpeg2ToH264Lifecycle(
+                        this.plugins.mpeg2toh264,
+                        'dplayer-previous-video-remove',
+                        {
+                            dplayerVideoGeneration: this.videoGeneration,
+                            qualitySwitchGeneration: this.activeQualitySwitch?.generation ?? 0,
+                            reason: 'quality-switch-error',
+                        },
+                    );
                     this.template.videoWrapAspect.removeChild(this.prevVideo);
                 }
                 this.video.classList.add('dplayer-video-current');
                 this.prevVideo = null;
                 this.switchingQuality = false;
                 this.events.trigger('quality_end');
+                this.activeQualitySwitch = null;
             }
             if (this.tran && this.notice && this.type !== 'webtorrent') {
                 this.notice(this.tran('Video load failed'), -1, undefined, '#FF6F6A');
@@ -1030,6 +1156,7 @@ class DPlayer {
     }
 
     initVideo(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void {
+        this.videoGeneration++;
         this.initMSE(video, type);
         if (!this.videoEventsInitialized) {
             this.initVideoEvents();
@@ -1122,9 +1249,33 @@ class DPlayer {
         index = typeof index === 'string' ? parseInt(index) : index;
         if (this.options.video.quality === undefined || this.qualityIndex === index || this.switchingQuality) {
             return;
-        } else {
-            this.qualityIndex = index;
         }
+        const qualitySwitch: DiagnosticQualitySwitch = {
+            generation: ++this.qualitySwitchGeneration,
+            fromQualityIndex: this.qualityIndex,
+            toQualityIndex: index,
+            startedAt: diagnosticNow(),
+            recordedOnMpeg: false,
+            criticalToken: null,
+            criticalOwner: undefined,
+        };
+        this.activeQualitySwitch = qualitySwitch;
+        const switchStartRecord = this.recordMpeg2ToH264Lifecycle(
+            this.plugins.mpeg2toh264,
+            'dplayer-quality-switch-start',
+            {
+                dplayerVideoGeneration: this.videoGeneration,
+                qualitySwitchGeneration: qualitySwitch.generation,
+                fromQualityIndex: qualitySwitch.fromQualityIndex,
+                toQualityIndex: qualitySwitch.toQualityIndex,
+                currentVideo: true,
+            },
+            { at: qualitySwitch.startedAt, critical: true },
+        );
+        qualitySwitch.recordedOnMpeg = switchStartRecord.recorded;
+        qualitySwitch.criticalToken = switchStartRecord.criticalToken;
+        qualitySwitch.criticalOwner = switchStartRecord.owner;
+        this.qualityIndex = index;
         this.switchingQuality = true;
         this.quality = this.options.video.quality[index];
 
@@ -1179,6 +1330,15 @@ class DPlayer {
                     this.seek(this.prevVideoCurrentTime);
                     return;
                 }
+                this.recordMpeg2ToH264Lifecycle(
+                    this.plugins.mpeg2toh264,
+                    'dplayer-previous-video-remove',
+                    {
+                        dplayerVideoGeneration: this.videoGeneration,
+                        qualitySwitchGeneration: this.activeQualitySwitch?.generation ?? 0,
+                        reason: 'quality-switch-complete',
+                    },
+                );
                 this.template.videoWrapAspect.removeChild(this.prevVideo);
                 this.video.classList.add('dplayer-video-current');
                 if (!paused) {
@@ -1202,7 +1362,24 @@ class DPlayer {
                 }
 
                 this.container.classList.remove('dplayer-loading');
+                const completedSwitch = this.activeQualitySwitch;
+                this.recordMpeg2ToH264Lifecycle(
+                    this.plugins.mpeg2toh264,
+                    'dplayer-quality-switch-end',
+                    {
+                        dplayerVideoGeneration: this.videoGeneration,
+                        qualitySwitchGeneration: completedSwitch?.generation ?? 0,
+                        currentVideo: true,
+                    },
+                );
+                if (completedSwitch !== null) {
+                    this.resolveMpeg2ToH264Lifecycle(
+                        completedSwitch.criticalOwner,
+                        completedSwitch.criticalToken,
+                    );
+                }
                 this.events.trigger('quality_end');
+                this.activeQualitySwitch = null;
             }
         };
         this.on('canplay', this.qualityCanplayHandler);
