@@ -44,6 +44,10 @@ declare class DPlayer {
     prevVideo: HTMLVideoElement | null;
     private videoEventsInitialized;
     private qualityCanplayHandler;
+    private readonly diagnosticInstance;
+    private videoGeneration;
+    private qualitySwitchGeneration;
+    private activeQualitySwitch;
     quality: DPlayerType.VideoQualityInternal | null;
     qualityIndex: number | null;
     switchingQuality: boolean;
@@ -110,6 +114,8 @@ declare class DPlayer {
         pic?: string;
     }, danmakuAPI?: DPlayerType.Danmaku | boolean, remember?: boolean, apiBackend?: DPlayerType.APIBackend): void;
     initDanmaku(danmakuAPI?: DPlayerType.Danmaku | boolean, apiBackend?: DPlayerType.APIBackend): void;
+    private recordMpeg2ToH264Lifecycle;
+    private resolveMpeg2ToH264Lifecycle;
     initMSE(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void;
     private initVideoEvents;
     initVideo(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void;
