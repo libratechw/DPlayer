@@ -116,6 +116,8 @@ declare class DPlayer {
     initDanmaku(danmakuAPI?: DPlayerType.Danmaku | boolean, apiBackend?: DPlayerType.APIBackend): void;
     private recordMpeg2ToH264Lifecycle;
     private resolveMpeg2ToH264Lifecycle;
+    private finishDiagnosticQualitySwitch;
+    private cancelDiagnosticQualitySwitch;
     initMSE(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void;
     private initVideoEvents;
     initVideo(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void;
@@ -144,6 +146,7 @@ declare class DPlayer {
      * Release the media backend currently attached to the video element
      */
     destroyMediaBackend(): void;
+    private releaseMediaBackend;
     /**
      * Destroy DPlayer, and it can not be used again
      * @param keepContainerInnerHTML If true, do not clean the innerHTML of the container
