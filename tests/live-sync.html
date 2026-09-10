@@ -30,11 +30,11 @@ function test(name, body) {
     try { body(); results.push({name, passed: true}); }
     catch (error) { results.push({name, passed: false, error: error.message}); }
 }
-for (const [name, duration] of [['NaN', NaN], ['positive-infinity', Infinity], ['negative-infinity', -Infinity]]) {
+for (const [name, duration] of [['NaN', NaN], ['positive-infinity', Infinity], ['negative-infinity', -Infinity], ['negative-target', 1]]) {
     test(name + '-is-a-no-op', () => {
         const {player, effects} = fixture(duration);
         DPlayer.prototype.sync.call(player);
-        assert(effects.writes.length === 0, 'must not write a nonfinite media time');
+        assert(effects.writes.length === 0, 'must not write an unavailable media time');
         assert(effects.seeks === 0 && effects.notices === 0, 'must not report a synchronization');
         assert(player.template.ptime.textContent === 'unchanged', 'must not change time display');
     });
@@ -43,7 +43,7 @@ for (const [name, duration, seekable, buffered, expected] of [
     ['finite-duration', 100, undefined, undefined, 98],
     ['seekable-live', Infinity, 120, 80, 118],
     ['buffered-live', Infinity, undefined, 80, 78],
-    ['finite-negative-target-preserved', 1, undefined, undefined, -1],
+    ['zero-target', 2, undefined, undefined, 0],
 ]) {
     test(name, () => {
         const {player, effects} = fixture(duration, seekable, buffered);
@@ -67,6 +67,22 @@ test('play-continues-before-metadata', () => {
     DPlayer.prototype.play.call(player);
     assert(effects.writes.length === 0, 'play must not inject NaN through sync');
     assert(effects.plays === 1, 'sync no-op must not suppress play');
+});
+test('native-play-continues-with-insufficient-live-history', () => {
+    const {player, effects} = fixture(1.24);
+    player.options.liveSyncMinBufferSize = 4.2;
+    DPlayer.prototype.play.call(player, true);
+    assert(effects.writes.length === 0, 'native play must preserve initial placement');
+    assert(effects.seeks === 0 && effects.notices === 0, 'must not report skipped synchronization');
+    assert(effects.plays === 1, 'sync no-op must not suppress native play');
+});
+test('sync-resumes-when-live-history-is-available', () => {
+    const {player, effects} = fixture(1);
+    DPlayer.prototype.sync.call(player);
+    assert(effects.writes.length === 0, 'initial sync must be skipped');
+    player.video.duration = 5;
+    DPlayer.prototype.sync.call(player);
+    assert(effects.writes.length === 1 && effects.writes[0] === 3, 'later valid sync must still work');
 });
 document.querySelector('#result').textContent = JSON.stringify({passed: results.every(r => r.passed), results});
 </script>
