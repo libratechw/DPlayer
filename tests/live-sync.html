@@ -74,7 +74,8 @@ test('native-play-continues-with-insufficient-live-history', () => {
     DPlayer.prototype.play.call(player, true);
     assert(effects.writes.length === 0, 'native play must preserve initial placement');
     assert(effects.seeks === 0 && effects.notices === 0, 'must not report skipped synchronization');
-    assert(effects.plays === 1, 'sync no-op must not suppress native play');
+    assert(effects.plays === 0, 'native play notification must not request play again');
+    assert(player.paused === false && player.container.classList.contains('dplayer-playing'), 'native play state must be preserved');
 });
 test('sync-resumes-when-live-history-is-available', () => {
     const {player, effects} = fixture(1);
