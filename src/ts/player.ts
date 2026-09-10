@@ -214,6 +214,10 @@ class DPlayer {
     sync(quiet = false): void {
         if (this.options.live) {
             const time = utils.getVideoDuration(this.video, this.template) - this.options.liveSyncMinBufferSize;
+            // The live timeline may not be available before media metadata arrives.
+            if (!Number.isFinite(time)) {
+                return;
+            }
             try {
                 this.video.currentTime = time;
             } catch (error) {
