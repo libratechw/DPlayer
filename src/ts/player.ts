@@ -259,9 +259,20 @@ class DPlayer {
             const playFunc = (this.type === 'mpegts' && this.plugins.mpegts && this.plugins.mpegts.play.bind(this.plugins.mpegts)) || targetVideo.play.bind(targetVideo);
             const playedPromise = Promise.resolve(playFunc());
             playedPromise
-                .catch(() => {
-                    // Ignore a rejection from the video replaced by a quality switch.
-                    if (this.video === targetVideo) {
+                .catch((error) => {
+                    if (error?.name === 'AbortError') {
+                        return;
+                    }
+                    console.warn('DPlayer: playback failed.', {
+                        error,
+                        switchingQuality: this.switchingQuality,
+                        type: this.type,
+                        readyState: targetVideo.readyState,
+                        currentVideo: this.video === targetVideo,
+                    });
+                    // A replacement may reject before it becomes playable. Preserve the
+                    // user's play intent so the quality-switch completion can retry it.
+                    if (this.video === targetVideo && targetVideo.paused && !this.switchingQuality) {
                         this.pause();
                     }
                 })
@@ -990,6 +1001,9 @@ class DPlayer {
                 this.video.classList.add('dplayer-video-current');
                 this.prevVideo = null;
                 this.switchingQuality = false;
+                if (this.video.paused && !this.paused) {
+                    this.pause();
+                }
                 this.events.trigger('quality_end');
             }
             if (this.tran && this.notice && this.type !== 'webtorrent') {
@@ -1133,7 +1147,6 @@ class DPlayer {
         this.switchingQuality = true;
         this.quality = this.options.video.quality[index];
 
-        const paused = this.video.paused;
         this.video.pause();
         const videoHTML = tplVideo({
             current: false,
@@ -1155,8 +1168,13 @@ class DPlayer {
         if (!this.options.live) {
             this.seek(this.prevVideoCurrentTime);
         }
-        if (!paused) {
-            this.video.play();
+        if (!this.paused) {
+            // Preserve a play intent that may change while the video element is replaced.
+            Promise.resolve(this.video.play()).catch((error) => {
+                if (error?.name !== 'AbortError') {
+                    console.warn('DPlayer: quality-switch immediate playback failed.', error);
+                }
+            });
         }
         if (this.options.lang.includes('ja')) {
             this.notice(`画質を ${this.quality.name} に切り替えています…`, -1);
@@ -1186,8 +1204,17 @@ class DPlayer {
                 }
                 this.template.videoWrapAspect.removeChild(this.prevVideo);
                 this.video.classList.add('dplayer-video-current');
-                if (!paused) {
-                    this.video.play();
+                if (!this.paused) {
+                    // Re-check the current intent instead of the outgoing video's stale state.
+                    const targetVideo = this.video;
+                    Promise.resolve(targetVideo.play()).catch((error) => {
+                        if (error?.name !== 'AbortError') {
+                            console.warn('DPlayer: quality-switch canplay playback failed.', error);
+                            if (this.video === targetVideo && targetVideo.paused && !this.switchingQuality) {
+                                this.pause();
+                            }
+                        }
+                    });
                 }
                 this.prevVideo = null;
                 if (this.options.lang.includes('ja')) {
