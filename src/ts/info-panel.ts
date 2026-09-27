@@ -294,29 +294,14 @@ class InfoPanel {
         // PlayerDeinterlacer does not publish yadif knobs; read them when this instance has them
         const deinterlacer = mpeg2toh264Player?.deinterlacer as Deinterlacer | null | undefined;
         if (deinterlacer && typeof deinterlacer.doubleRate === 'boolean') {
-            const cadence = this.mpeg2toh264DeinterlaceStats?.mode;
+            const filmDetected = this.mpeg2toh264DeinterlaceStats?.film;
             terms.push(`doublerate: ${deinterlacer.doubleRate ? 'on' : 'off'}`);
-            if (!deinterlacer.autoFilm) {
-                terms.push('autofilm: off');
-            } else if (cadence) {
-                terms.push(`autofilm: on (mode: ${cadence})`);
+            if (!deinterlacer.film) {
+                terms.push('film: off');
+            } else if (filmDetected !== undefined) {
+                terms.push(`film: on (mode: ${filmDetected ? 'film' : 'video'})`);
             } else {
-                terms.push('autofilm: on');
-            }
-            // GPU pulldown state (present when the yadif take provides it;
-            // unknown-typed so this panel still compiles against older yadif).
-            // Shown only when the GPU path is selected; under autoFilm the
-            // CPU engine owns the cadence and stats.film does not apply.
-            const filmOption: unknown = (deinterlacer as { film?: unknown }).film;
-            if (typeof filmOption === 'boolean' && filmOption && !deinterlacer.autoFilm) {
-                const stats = this.mpeg2toh264DeinterlaceStats as unknown as { film?: unknown; filmError?: unknown };
-                const filmError = stats?.filmError;
-                if (typeof filmError === 'string' && filmError !== '') {
-                    terms.push(`film: degraded (${filmError})`);
-                } else {
-                    const locked = stats?.film;
-                    terms.push(locked === true ? 'film: on (24p locked)' : 'film: on (detecting)');
-                }
+                terms.push('film: on');
             }
         }
         return terms.join(' / ');

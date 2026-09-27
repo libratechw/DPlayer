@@ -1197,13 +1197,19 @@ class DPlayer {
             this.off('canplay', this.qualityCanplayHandler);
         }
         this.qualityCanplayHandler = () => {
-            if (this.prevVideo !== null) {
-                if (!this.options.live && this.video.currentTime !== this.prevVideoCurrentTime) {
+            if (this.video === videoEle && this.prevVideo !== null) {
+                // Allow up to 50 ms for timestamp rounding and playback progress between seeked and canplay
+                // Keep restoring the position if the backend replaced the initial seek while loading
+                if (!this.options.live && Math.abs(this.video.currentTime - this.prevVideoCurrentTime) > 0.05) {
                     this.seek(this.prevVideoCurrentTime);
                     return;
                 }
                 this.template.videoWrapAspect.removeChild(this.prevVideo);
                 this.video.classList.add('dplayer-video-current');
+                if (this.qualityCanplayHandler !== null) {
+                    this.off('canplay', this.qualityCanplayHandler);
+                    this.qualityCanplayHandler = null;
+                }
                 if (!this.paused) {
                     // Re-check the current intent instead of the outgoing video's stale state.
                     const targetVideo = this.video;
