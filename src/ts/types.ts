@@ -3,7 +3,8 @@ import Mpegts from 'mpegts.js';
 import FlvJs from 'flv.js';
 import * as dashjs from 'dashjs';
 import WebTorrent from 'webtorrent';
-import * as aribb24js from 'aribb24.js';
+import type Aribb24Track from './aribb24';
+import type { Aribb24Options } from './aribb24';
 import type { Mpeg2TsPlayer, Mpeg2TsPlayerOptions } from 'mpeg2toh264/player';
 import type { Deinterlacer } from 'mpeg2toh264/yadif';
 
@@ -66,7 +67,9 @@ export type PlayerEvents =
     'webfullscreen_cancel' |
     'subtitle_show' |
     'subtitle_hide' |
-    'subtitle_change';
+    'subtitle_change' |
+    'subtitle_error' |
+    'subtitle_renderer_fallback';
 
 export type DanmakuType = 'top' | 'right' | 'bottom';
 export type DanmakuSize = 'big' | 'medium' | 'small';
@@ -458,9 +461,7 @@ export interface PluginOptions {
     flv?: { config?: FlvJs.Config; mediaDataSource?: FlvJs.MediaDataSource; };
     dash?: dashjs.MediaPlayerSettingClass;
     webtorrent?: WebTorrent.Options;
-    aribb24?: aribb24js.CanvasRendererOption & {
-        disableSuperimposeRenderer?: boolean;
-    }
+    aribb24?: Aribb24Options;
 }
 
 // ===== internal types =====
@@ -557,8 +558,8 @@ export interface Plugins {
     flvjs?: FlvJs.Player;
     dash?: dashjs.MediaPlayerClass;
     webtorrent?: WebTorrent.Instance;
-    aribb24Caption?: aribb24js.CanvasRenderer;
-    aribb24Superimpose?: aribb24js.CanvasRenderer;
+    aribb24Caption?: Aribb24Track;
+    aribb24Superimpose?: Aribb24Track;
 }
 
 export interface APIBackendReadOptions {
