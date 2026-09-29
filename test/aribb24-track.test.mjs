@@ -21,14 +21,31 @@ class HLSFeeder extends Feeder {
 let rejectMainConstruction = false;
 class Renderer {
     static latest;
-    constructor() {
+    constructor(option) {
         if (rejectMainConstruction) throw new Error('Main renderer construction blocked');
         Renderer.latest = this;
+        this.target = option?.resize?.target ?? 'container';
+        this.canvas = { width: 0, height: 0 };
         this.renders = 0;
+        this.displayed = [];
     }
-    onContainerResize(width, height) { this.size = [width, height]; }
-    onVideoResize(width, height) { this.size = [width, height]; }
-    render() { this.renders++; }
+    onContainerResize(width, height) {
+        if (this.target !== 'container') return false;
+        this.size = [width, height];
+        this.canvas.width = width;
+        this.canvas.height = height;
+        return true;
+    }
+    onVideoResize(width, height) {
+        if (this.target !== 'video') return false;
+        this.size = [width, height];
+        this.canvas.width = width;
+        this.canvas.height = height;
+        return true;
+    }
+    render(_state, data) { this.renders++; this.displayed.push(data); }
+    clear() { this.displayed = []; }
+    getPresentationCanvas() { return this.canvas; }
     hide() { this.hidden = true; }
     destroy() {}
 }
@@ -45,13 +62,36 @@ class BlockedWorkerRenderer {
     destroy() {}
 }
 class Controller {
+    constructor() { this.renderers = []; }
     attachFeeder() {}
-    attachRenderer() {}
-    attachMedia() {}
+    attachRenderer(renderer) {
+        this.renderers.push(renderer);
+        if (!this.media || !(renderer instanceof Renderer)) return;
+        this.sizeRenderer(renderer);
+        if (renderer.canvas.width && renderer.canvas.height) {
+            // The real Controller paints the current cue on late attachment.
+            renderer.render({}, [{ tag: 'Character', value: 'latest' }], {});
+        }
+    }
+    attachMedia(video) {
+        this.media = video;
+        for (const renderer of this.renderers) {
+            if (renderer instanceof Renderer) this.sizeRenderer(renderer);
+        }
+    }
+    sizeRenderer(renderer) {
+        const bounds = this.media.parentElement?.getBoundingClientRect();
+        if (bounds?.width > 0 && bounds.height > 0) {
+            renderer.onContainerResize(Math.floor(bounds.width * 2), Math.floor(bounds.height * 2));
+        }
+        if (this.media.videoWidth && this.media.videoHeight) {
+            renderer.onVideoResize(this.media.videoWidth, this.media.videoHeight);
+        }
+    }
     show() {}
     hide() {}
     detachMedia() {}
-    detachRenderer() {}
+    detachRenderer(renderer) { this.renderers = this.renderers.filter((item) => item !== renderer); }
     detachFeeder() {}
     showing() { return true; }
 }
@@ -113,7 +153,37 @@ test('an asynchronous Worker failure restores the displayed cue on a sized main-
         assert.ok(track.renderer instanceof Renderer);
         assert.deepEqual(Renderer.latest.size, [200, 100]);
         assert.equal(Renderer.latest.renders, 1);
+        assert.equal(Renderer.latest.displayed.length, 1);
         assert.deepEqual(reports, [{ message: 'Worker script failed', recovered: true }]);
+        track.destroy();
+    } finally {
+        rejectWorkerConstruction = true;
+        delete context.HTMLCanvasElement.prototype.transferControlToOffscreen;
+        delete context.OffscreenCanvas;
+        delete context.Worker;
+    }
+});
+
+test('Worker recovery replays a stack once without overriding the Controller size', () => {
+    context.HTMLCanvasElement.prototype.transferControlToOffscreen = () => {};
+    context.OffscreenCanvas = class {};
+    context.Worker = class {};
+    rejectWorkerConstruction = false;
+    try {
+        const video = {
+            parentElement: { getBoundingClientRect: () => ({ width: 100, height: 50 }) },
+            videoWidth: 1920, videoHeight: 1080,
+        };
+        const track = new Aribb24Track(video, 'Caption', 'mpegts', { renderInWorker: true });
+        track.displayCue.render({ elapsed_time: 0 }, [{ tag: 'Character', value: 'first' }], {});
+        track.displayCue.render({ elapsed_time: 0 }, [{ tag: 'Character', value: 'second' }], {});
+        latestWorkerRenderer.onFailure(new Error('Worker script failed'));
+
+        assert.deepEqual(Renderer.latest.size, [200, 100]);
+        assert.equal(Renderer.latest.renders, 3);
+        assert.equal(Renderer.latest.displayed.length, 2);
+        assert.equal(Renderer.latest.displayed[0][0].value, 'first');
+        assert.equal(Renderer.latest.displayed[1][0].value, 'second');
         track.destroy();
     } finally {
         rejectWorkerConstruction = true;

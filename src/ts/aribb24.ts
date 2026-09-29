@@ -172,28 +172,13 @@ export default class Aribb24Track {
             this.renderer.destroy();
             this.renderer = replacement;
             this.controller.attachRenderer(replacement);
-
-            // A renderer added after attachMedia does not receive the initial
-            // resize event. Restore its size and the cue already on screen.
-            let sized = false;
-            if ((this.rendererOption?.resize?.target ?? 'container') === 'video') {
-                if (this.video.videoWidth > 0 && this.video.videoHeight > 0) {
-                    replacement.onVideoResize(this.video.videoWidth, this.video.videoHeight);
-                    sized = true;
-                }
-            } else {
-                const bounds = this.video.parentElement?.getBoundingClientRect();
-                if (bounds && bounds.width > 0 && bounds.height > 0) {
-                    replacement.onContainerResize(
-                        Math.floor(bounds.width * devicePixelRatio),
-                        Math.floor(bounds.height * devicePixelRatio),
-                    );
-                    sized = true;
-                }
-            }
-            // A later media/container resize will repaint when dimensions are unavailable.
-            if (sized) {
-                for (const cue of this.displayCue.displayed()) {
+            // attachRenderer owns sizing and the current cue. Only a stack of
+            // statements needs replay, after clearing that single-cue paint.
+            const cues = this.displayCue.displayed();
+            const canvas = replacement.getPresentationCanvas();
+            if (this.controller.showing() && cues.length > 1 && canvas.width > 0 && canvas.height > 0) {
+                replacement.clear();
+                for (const cue of cues) {
                     replacement.render(structuredClone(cue.state), structuredClone(cue.data), structuredClone(cue.info));
                 }
             }
