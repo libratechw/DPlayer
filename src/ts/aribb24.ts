@@ -102,6 +102,7 @@ export default class Aribb24Track {
     private readonly displayCue: DisplayCueObserver;
     private readonly rendererOption: aribb24js.PartialCanvasRendererOption | undefined;
     private destroyed = false;
+    private restoreStackOnShow = false;
 
     constructor(
         private readonly video: HTMLVideoElement,
@@ -177,12 +178,14 @@ export default class Aribb24Track {
             const cues = this.displayCue.displayed();
             const canvas = replacement.getPresentationCanvas();
             if (this.controller.showing() && cues.length > 1 && canvas.width > 0 && canvas.height > 0) {
-                replacement.clear();
-                for (const cue of cues) {
-                    replacement.render(structuredClone(cue.state), structuredClone(cue.data), structuredClone(cue.info));
-                }
+                this.replayStatements(replacement, cues);
             }
-            if (!this.controller.showing()) replacement.hide();
+            if (!this.controller.showing()) {
+                // The Controller repaints only its latest cue when shown again.
+                // Preserve a multi-statement picture across a hidden recovery.
+                this.restoreStackOnShow = cues.length > 1;
+                replacement.hide();
+            }
         } catch (recoveryError) {
             if (replacement && this.renderer !== replacement) replacement.destroy();
             this.destroy();
@@ -192,6 +195,14 @@ export default class Aribb24Track {
         // Reporting is outside the recovery transaction: a consumer event
         // handler must not turn a working replacement into a failed renderer.
         this.onRendererFailure?.(error, true);
+    }
+
+    private replayStatements(renderer: aribb24js.CanvasMainThreadRenderer,
+        cues: readonly { state: CueState; data: CueTokens; info: CueInfo }[]): void {
+        renderer.clear();
+        for (const cue of cues) {
+            renderer.render(structuredClone(cue.state), structuredClone(cue.data), structuredClone(cue.info));
+        }
     }
 
     private ensureActive(): void {
@@ -211,6 +222,16 @@ export default class Aribb24Track {
     show(): void {
         this.ensureActive();
         this.controller.show();
+        if (this.restoreStackOnShow && this.renderer instanceof aribb24js.CanvasMainThreadRenderer) {
+            const cues = this.displayCue.displayed();
+            const canvas = this.renderer.getPresentationCanvas();
+            if (canvas.width > 0 && canvas.height > 0) {
+                if (cues.length > 1) {
+                    this.replayStatements(this.renderer, cues);
+                }
+                this.restoreStackOnShow = false;
+            }
+        }
     }
 
     hide(): void {

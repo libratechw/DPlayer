@@ -31,8 +31,10 @@ export default class Aribb24Track {
     private readonly displayCue;
     private readonly rendererOption;
     private destroyed;
+    private restoreStackOnShow;
     constructor(video: HTMLVideoElement, type: 'Caption' | 'Superimpose', input: 'hls' | 'mpegts', option: Aribb24Options, onRendererFailure?: ((error: Error, recovered: boolean) => void) | undefined);
     private recoverWorker;
+    private replayStatements;
     private ensureActive;
     feedID3(data: Uint8Array | ArrayBufferLike, pts: number): void;
     feedB24(data: Uint8Array | ArrayBufferLike, pts: number): void;

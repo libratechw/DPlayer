@@ -62,13 +62,13 @@ class BlockedWorkerRenderer {
     destroy() {}
 }
 class Controller {
-    constructor() { this.renderers = []; }
+    constructor() { this.renderers = []; this.isShowing = true; }
     attachFeeder() {}
     attachRenderer(renderer) {
         this.renderers.push(renderer);
         if (!this.media || !(renderer instanceof Renderer)) return;
         this.sizeRenderer(renderer);
-        if (renderer.canvas.width && renderer.canvas.height) {
+        if (this.isShowing && renderer.canvas.width && renderer.canvas.height) {
             // The real Controller paints the current cue on late attachment.
             renderer.render({}, [{ tag: 'Character', value: 'latest' }], {});
         }
@@ -88,12 +88,21 @@ class Controller {
             renderer.onVideoResize(this.media.videoWidth, this.media.videoHeight);
         }
     }
-    show() {}
-    hide() {}
+    show() {
+        if (!this.isShowing) {
+            this.isShowing = true;
+            for (const renderer of this.renderers) {
+                if (renderer instanceof Renderer && renderer.canvas.width && renderer.canvas.height) {
+                    renderer.render({}, [{ tag: 'Character', value: 'latest' }], {});
+                }
+            }
+        }
+    }
+    hide() { this.isShowing = false; }
     detachMedia() {}
     detachRenderer(renderer) { this.renderers = this.renderers.filter((item) => item !== renderer); }
     detachFeeder() {}
-    showing() { return true; }
+    showing() { return this.isShowing; }
 }
 
 const exports = {};
@@ -184,6 +193,40 @@ test('Worker recovery replays a stack once without overriding the Controller siz
         assert.equal(Renderer.latest.displayed.length, 2);
         assert.equal(Renderer.latest.displayed[0][0].value, 'first');
         assert.equal(Renderer.latest.displayed[1][0].value, 'second');
+        track.destroy();
+    } finally {
+        rejectWorkerConstruction = true;
+        delete context.HTMLCanvasElement.prototype.transferControlToOffscreen;
+        delete context.OffscreenCanvas;
+        delete context.Worker;
+    }
+});
+
+test('hidden Worker recovery restores the full statement stack on show', () => {
+    context.HTMLCanvasElement.prototype.transferControlToOffscreen = () => {};
+    context.OffscreenCanvas = class {};
+    context.Worker = class {};
+    rejectWorkerConstruction = false;
+    try {
+        const video = {
+            parentElement: { getBoundingClientRect: () => ({ width: 100, height: 50 }) },
+            videoWidth: 1920, videoHeight: 1080,
+        };
+        const track = new Aribb24Track(video, 'Caption', 'mpegts', { renderInWorker: true });
+        track.displayCue.render({ elapsed_time: 0 }, [{ tag: 'Character', value: 'first' }], {});
+        track.displayCue.render({ elapsed_time: 0 }, [{ tag: 'Character', value: 'second' }], {});
+        track.hide();
+        latestWorkerRenderer.onFailure(new Error('Worker script failed'));
+
+        assert.ok(track.renderer instanceof Renderer);
+        assert.equal(Renderer.latest.renders, 0);
+        track.show();
+        assert.equal(Renderer.latest.displayed.length, 2);
+        assert.equal(Renderer.latest.displayed[0][0].value, 'first');
+        assert.equal(Renderer.latest.displayed[1][0].value, 'second');
+        const renders = Renderer.latest.renders;
+        track.show();
+        assert.equal(Renderer.latest.renders, renders);
         track.destroy();
     } finally {
         rejectWorkerConstruction = true;
