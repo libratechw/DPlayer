@@ -5,7 +5,8 @@
     "main": "dist/DPlayer.min.js",
     "types": "dist/d.ts/index.d.ts",
     "files": [
-        "dist"
+        "dist",
+        "THIRD-PARTY-NOTICES.md"
     ],
     "keywords": [
         "player",
@@ -31,7 +32,7 @@
         "start": "npm run dev",
         "build": "cross-env NODE_ENV=production webpack build --config webpack/prod.config.js --progress",
         "dev": "cross-env NODE_ENV=development webpack serve --config webpack/dev.config.js",
-        "test": "eslint src",
+        "test": "eslint src && node --test test/aribb24-adapter.test.mjs test/aribb24-track.test.mjs test/aribb24-picture.test.mjs",
         "type-check": "tsc --noEmit",
         "format": "eslint \"**/*.ts\" --fix",
         "format:check": "eslint \"**/*.ts\"",
@@ -39,7 +40,7 @@
         "docs:build": "vuepress build docs"
     },
     "dependencies": {
-        "aribb24.js": "~1.11.5",
+        "aribb24.js": "git+https://github.com/libratechw/aribb24.js.git#0dfd384f6d18031627d467a578fb8b9e2885c00a",
         "axios": "^1.7.2",
         "balloon-css": "^1.2.0"
     },

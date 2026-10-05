@@ -186,6 +186,16 @@ const dp = new DPlayer({
 });
 ```
 
+### ARIB captions
+
+ARIB caption integrations must migrate `pluginOptions.aribb24` from aribb24.js v1 to v2. Old flat options such as `normalFont`, `PRACallback`, `drcsReplaceMapping`, and `useHighResTimeupdate` are rejected rather than silently ignored. Initialization errors show a player notice; errors after listeners can be registered also emit `subtitle_error`. Use `renderer.font.normal`, `renderer.font.arib`, `renderer.color.stroke`, `renderer.color.background`, `feeder.tokenizer.pua`, and `onBuiltinSound` for the corresponding settings. Select a caption language with `feeder.recieve.language` instead of `data_group_id`. Pass a `Map<string, string>` as `renderer.replace.drcs` instead of the old object-valued `drcsReplaceMapping`; this replaces the default map rather than extending it. `drcsReplacement: true` enables the known DRCS glyph replacements previously supplied by aribb24.js v1.
+
+`gaijiFont` (also documented as `gainiFont`) maps to `renderer.font.arib`. DPlayer now selects the Caption or Superimpose track instead of accepting `data_identifier`, and owns metadata-track detection instead of exposing `enableAutoInBandMetadataTextTrackDetection`. `renderer.resize.objectFit` controls whether the image is contained or drawn at its own size; it is not a drop-in replacement for every `keepAspectRatio` use. The old `useStroke`, `useHighResTextTrack`, and `useHighResTimeupdate` switches have no direct v2 option. `enableRawCanvas` is gone: `snapshot()` supplies an on-demand still, not a continuously accessible raw canvas. Applications relying on these old behaviors must evaluate the new rendering contract rather than remove the keys without checking the result.
+
+`plugins.aribb24Caption` and `plugins.aribb24Superimpose` now expose DPlayer's `Aribb24Track`, not the former aribb24.js renderer. Renderer methods such as `getRawCanvas()`, `refresh()`, and `pushID3v2Data()` are no longer available on these plugin entries. Use the asynchronous `plugins.aribb24Caption.snapshot(width, height)` for a still image and its caption text. The caller owns the returned `ImageBitmap` and must close it.
+
+Rendering stays on the main thread by default so fonts loaded by the page remain available. `renderInWorker: true` is opt-in and requires the Worker canvas APIs. A construction failure shows a player notice; if a running Worker fails, the same caption track resumes on the main thread and emits `subtitle_renderer_fallback`. If that recovery also fails, DPlayer emits `subtitle_error` and stops the ARIB caption backend. A new media backend creates new tracks and retries the explicitly requested Worker: a runtime failure is not a permanent browser capability verdict. Worker rendering does not inherit fonts loaded only by the page. A saved track reference cannot be used after its player has destroyed that track.
+
 ## API
 
 -   `dp.play()`: play video
@@ -363,6 +373,8 @@ Player events
 -   subtitle_show
 -   subtitle_hide
 -   subtitle_change
+-   subtitle_error
+-   subtitle_renderer_fallback
 
 ## Quality switching
 

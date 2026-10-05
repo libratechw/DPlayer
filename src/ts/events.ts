@@ -59,6 +59,8 @@ class Events {
             'subtitle_show',
             'subtitle_hide',
             'subtitle_change',
+            'subtitle_error',
+            'subtitle_renderer_fallback',
         ];
     }
 

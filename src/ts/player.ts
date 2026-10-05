@@ -1,5 +1,4 @@
-import * as aribb24js from 'aribb24.js';
-
+import Aribb24Track from './aribb24';
 import utils from './utils';
 import handleOption from './options';
 import i18n from './i18n';
@@ -23,6 +22,13 @@ import tplVideo from '../template/video.art';
 import defaultApiBackend from './api';
 import * as DPlayerType from './types';
 import type { PlayerState, PrivateStream, Progress, Stats } from 'mpeg2toh264/player';
+
+const legacyAribb24OptionKeys = [
+    'data_identifier', 'data_group_id', 'normalFont', 'gainiFont', 'gaijiFont',
+    'forceStrokeColor', 'forceBackgroundColor', 'drcsReplaceMapping',
+    'PRACallback', 'keepAspectRatio', 'enableRawCanvas', 'useStroke', 'usePUA',
+    'useHighResTextTrack', 'useHighResTimeupdate', 'enableAutoInBandMetadataTextTrackDetection',
+] as const;
 
 let index = 0;
 const instances: DPlayer[] = [];
@@ -479,6 +485,62 @@ class DPlayer {
         this.comment = new Comment(this);
     }
 
+    private initAribb24(video: HTMLVideoElement, input: 'hls' | 'mpegts'): void {
+        if (this.options.subtitle?.type !== 'aribb24') {
+            return;
+        }
+
+        const option = this.options.pluginOptions.aribb24 ?? {};
+        try {
+            const legacyKeys = legacyAribb24OptionKeys.filter((key) =>
+                Object.prototype.hasOwnProperty.call(option, key) && Reflect.get(option, key) !== undefined);
+            if (legacyKeys.length > 0) {
+                throw new Error(`Legacy ARIB caption options (${legacyKeys.join(', ')}) are unsupported; migrate to the v2 renderer/feeder options.`);
+            }
+            const onRendererFailure = (error: Error, recovered: boolean) => {
+                if (recovered) {
+                    console.warn('[DPlayer] ARIB caption Worker failed; main-thread rendering resumed:', error);
+                    this.events.trigger('subtitle_renderer_fallback', error);
+                    this.notice(this.tran('ARIB caption Worker failed; main-thread rendering resumed.'), 5000);
+                } else {
+                    this.destroyAribb24();
+                    console.error('[DPlayer] ARIB captions could not recover from a Worker failure:', error);
+                    this.events.trigger('subtitle_error', error);
+                    this.notice(this.tran('Error: ARIB captions could not be restored.'), -1, undefined, '#FF6F6A');
+                }
+            };
+            this.plugins.aribb24Caption = new Aribb24Track(video, 'Caption', input, option, onRendererFailure);
+            if (!option.disableSuperimposeRenderer) {
+                this.plugins.aribb24Superimpose = new Aribb24Track(video, 'Superimpose', input, option, onRendererFailure);
+            }
+            if (!this.user.get('subtitle')) {
+                this.plugins.aribb24Caption.hide();
+            }
+        } catch (error) {
+            this.destroyAribb24();
+            console.error('[DPlayer] ARIB captions could not be initialized:', error);
+            this.events.trigger('subtitle_error', error);
+            this.notice(this.tran('Error: ARIB captions could not be initialized.'), -1, undefined, '#FF6F6A');
+        }
+    }
+
+    private destroyAribb24(): void {
+        this.plugins.aribb24Caption?.destroy();
+        delete this.plugins.aribb24Caption;
+        this.plugins.aribb24Superimpose?.destroy();
+        delete this.plugins.aribb24Superimpose;
+    }
+
+    private feedAribb24ID3(data: Uint8Array | ArrayBufferLike, pts: number): void {
+        this.plugins.aribb24Caption?.feedID3(data, pts);
+        this.plugins.aribb24Superimpose?.feedID3(data, pts);
+    }
+
+    private feedAribb24B24(data: Uint8Array | ArrayBufferLike, pts: number): void {
+        this.plugins.aribb24Caption?.feedB24(data, pts);
+        this.plugins.aribb24Superimpose?.feedB24(data, pts);
+    }
+
     initMSE(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void {
         // A video element has exactly one media backend, so switching formats releases the previous owner first
         this.destroyMediaBackend();
@@ -538,57 +600,18 @@ class DPlayer {
 
                             // Keep the cleanup paired with this exact instance across quality and format switches
                             this.mediaBackendDestroy = () => {
-                                // destroy aribb24 caption
-                                if (this.plugins.aribb24Caption) {
-                                    this.plugins.aribb24Caption.dispose();
-                                    delete this.plugins.aribb24Caption;
-                                }
-                                // destroy aribb24 superimpose
-                                if (this.plugins.aribb24Superimpose) {
-                                    this.plugins.aribb24Superimpose.dispose();
-                                    delete this.plugins.aribb24Superimpose;
-                                }
+                                this.destroyAribb24();
                                 hls.destroy();
                                 if (this.plugins.hls === hls) {
                                     delete this.plugins.hls;
                                 }
                             };
 
-                            // initialize aribb24.js
-                            // https://github.com/monyone/aribb24.js
                             if (this.options.subtitle && this.options.subtitle.type === 'aribb24') {
-                                // set options
-                                if (this.options.pluginOptions.aribb24 === undefined) {
-                                    this.options.pluginOptions.aribb24 = {};
-                                }
-                                this.options.pluginOptions.aribb24.enableAutoInBandMetadataTextTrackDetection = false; // for hls.js
-                                const aribb24Options = this.options.pluginOptions.aribb24;
-
-                                // initialize aribb24 caption
-                                const aribb24Caption = this.plugins.aribb24Caption = new aribb24js.CanvasRenderer(
-                                    {...aribb24Options, data_identifier: 0x80},
-                                );
-                                aribb24Caption.attachMedia(video);
-                                aribb24Caption.show();
-
-                                // initialize aribb24 superimpose
-                                if (this.options.pluginOptions.aribb24.disableSuperimposeRenderer !== true) {
-                                    const aribb24Superimpose = this.plugins.aribb24Superimpose = new aribb24js.CanvasRenderer(
-                                        {...aribb24Options, data_identifier: 0x81},
-                                    );
-                                    aribb24Superimpose.attachMedia(video);
-                                    aribb24Superimpose.show();
-                                }
-
-                                // push caption data into CanvasRenderer
+                                this.initAribb24(video, 'mpegts');
                                 hls.on(window.Hls.Events.FRAG_PARSING_METADATA, (event, data) => {
                                     for (const sample of data.samples) {
-                                        if (this.plugins.aribb24Caption) {
-                                            this.plugins.aribb24Caption.pushID3v2Data(sample.pts, sample.data);
-                                        }
-                                        if (this.plugins.aribb24Superimpose) {
-                                            this.plugins.aribb24Superimpose.pushID3v2Data(sample.pts, sample.data);
-                                        }
+                                        this.feedAribb24ID3(sample.data, sample.pts);
                                     }
                                 });
                             }
@@ -596,44 +619,10 @@ class DPlayer {
                             // normal playback
                             // Native HLS has no plugin instance, but its renderers still follow the media backend lifetime
                             this.mediaBackendDestroy = () => {
-                                // destroy aribb24 caption
-                                if (this.plugins.aribb24Caption) {
-                                    this.plugins.aribb24Caption.dispose();
-                                    delete this.plugins.aribb24Caption;
-                                }
-                                // destroy aribb24 superimpose
-                                if (this.plugins.aribb24Superimpose) {
-                                    this.plugins.aribb24Superimpose.dispose();
-                                    delete this.plugins.aribb24Superimpose;
-                                }
+                                this.destroyAribb24();
                             };
 
-                            // initialize aribb24.js
-                            // https://github.com/monyone/aribb24.js
-                            if (this.options.subtitle && this.options.subtitle.type === 'aribb24') {
-                                // set options
-                                if (this.options.pluginOptions.aribb24 === undefined) {
-                                    this.options.pluginOptions.aribb24 = {};
-                                }
-                                this.options.pluginOptions.aribb24.enableAutoInBandMetadataTextTrackDetection = true; // for Safari native HLS player
-                                const aribb24Options = this.options.pluginOptions.aribb24;
-
-                                // initialize aribb24 caption
-                                const aribb24Caption = this.plugins.aribb24Caption = new aribb24js.CanvasRenderer(
-                                    {...aribb24Options, data_identifier: 0x80},
-                                );
-                                aribb24Caption.attachMedia(video);
-                                aribb24Caption.show();
-
-                                // initialize aribb24 superimpose
-                                if (this.options.pluginOptions.aribb24.disableSuperimposeRenderer !== true) {
-                                    const aribb24Superimpose = this.plugins.aribb24Superimpose = new aribb24js.CanvasRenderer(
-                                        {...aribb24Options, data_identifier: 0x81},
-                                    );
-                                    aribb24Superimpose.attachMedia(video);
-                                    aribb24Superimpose.show();
-                                }
-                            }
+                            this.initAribb24(video, 'hls');
                         } else {
                             this.notice('Error: HLS is not supported.', undefined, undefined, '#FF6F6A');
                         }
@@ -663,16 +652,7 @@ class DPlayer {
 
                             // Preserve mpegts.js's established unload and detach order for this instance
                             this.mediaBackendDestroy = () => {
-                                // destroy aribb24 caption
-                                if (this.plugins.aribb24Caption) {
-                                    this.plugins.aribb24Caption.dispose();
-                                    delete this.plugins.aribb24Caption;
-                                }
-                                // destroy aribb24 superimpose
-                                if (this.plugins.aribb24Superimpose) {
-                                    this.plugins.aribb24Superimpose.dispose();
-                                    delete this.plugins.aribb24Superimpose;
-                                }
+                                this.destroyAribb24();
                                 mpegtsPlayer.unload();
                                 mpegtsPlayer.detachMediaElement();
                                 mpegtsPlayer.destroy();
@@ -681,40 +661,10 @@ class DPlayer {
                                 }
                             };
 
-                            // initialize aribb24.js
-                            // https://github.com/monyone/aribb24.js
                             if (this.options.subtitle && this.options.subtitle.type === 'aribb24') {
-                                // set options
-                                if (this.options.pluginOptions.aribb24 === undefined) {
-                                    this.options.pluginOptions.aribb24 = {};
-                                }
-                                this.options.pluginOptions.aribb24.enableAutoInBandMetadataTextTrackDetection = false; // for mpegts.js
-                                const aribb24Options = this.options.pluginOptions.aribb24;
-
-                                // initialize aribb24 caption
-                                const aribb24Caption = this.plugins.aribb24Caption = new aribb24js.CanvasRenderer(
-                                    {...aribb24Options, data_identifier: 0x80},
-                                );
-                                aribb24Caption.attachMedia(video);
-                                aribb24Caption.show();
-
-                                // initialize aribb24 superimpose
-                                if (this.options.pluginOptions.aribb24.disableSuperimposeRenderer !== true) {
-                                    const aribb24Superimpose = this.plugins.aribb24Superimpose = new aribb24js.CanvasRenderer(
-                                        {...aribb24Options, data_identifier: 0x81},
-                                    );
-                                    aribb24Superimpose.attachMedia(video);
-                                    aribb24Superimpose.show();
-                                }
-
-                                // push caption data into CanvasRenderer
+                                this.initAribb24(video, 'mpegts');
                                 mpegtsPlayer.on(window.mpegts.Events.TIMED_ID3_METADATA_ARRIVED, (data) => {
-                                    if (this.plugins.aribb24Caption) {
-                                        this.plugins.aribb24Caption.pushID3v2Data(data.pts / 1000, data.data);
-                                    }
-                                    if (this.plugins.aribb24Superimpose) {
-                                        this.plugins.aribb24Superimpose.pushID3v2Data(data.pts / 1000, data.data);
-                                    }
+                                    this.feedAribb24ID3(data.data, data.pts / 1000);
                                 });
                             }
                         } else {
@@ -788,27 +738,8 @@ class DPlayer {
                             this.setting.setCurrentAudio(isSecondaryAudio ? 'secondary' : 'primary');
                         });
 
-                        // aribb24.js v1 accepts the raw private PES payload under its timed PRIV owner contract
                         if (this.options.subtitle && this.options.subtitle.type === 'aribb24') {
-                            if (this.options.pluginOptions.aribb24 === undefined) {
-                                this.options.pluginOptions.aribb24 = {};
-                            }
-                            this.options.pluginOptions.aribb24.enableAutoInBandMetadataTextTrackDetection = false;
-                            const aribb24Options = this.options.pluginOptions.aribb24;
-
-                            // Caption and superimpose share PES delivery while data_identifier selects their own payloads
-                            const aribb24Caption = this.plugins.aribb24Caption = new aribb24js.CanvasRenderer(
-                                {...aribb24Options, data_identifier: 0x80},
-                            );
-                            aribb24Caption.attachMedia(video);
-                            aribb24Caption.show();
-                            if (this.options.pluginOptions.aribb24.disableSuperimposeRenderer !== true) {
-                                const aribb24Superimpose = this.plugins.aribb24Superimpose = new aribb24js.CanvasRenderer(
-                                    {...aribb24Options, data_identifier: 0x81},
-                                );
-                                aribb24Superimpose.attachMedia(video);
-                                aribb24Superimpose.show();
-                            }
+                            this.initAribb24(video, 'mpegts');
 
                             const pushPrivateStream = (event: CustomEvent<PrivateStream>) => {
                                 // A PES without PTS cannot be placed on the media timeline and is ignored by the renderer
@@ -816,8 +747,7 @@ class DPlayer {
                                     return;
                                 }
                                 const data = new Uint8Array(event.detail.data);
-                                this.plugins.aribb24Caption?.pushID3v2PRIVData(event.detail.pts, 'aribb24.js', data);
-                                this.plugins.aribb24Superimpose?.pushID3v2PRIVData(event.detail.pts, 'aribb24.js', data);
+                                this.feedAribb24B24(data, event.detail.pts);
                             };
                             mpeg2toh264Player.addEventListener('private_stream_1', pushPrivateStream);
                             mpeg2toh264Player.addEventListener('private_stream_2', pushPrivateStream);
@@ -830,14 +760,7 @@ class DPlayer {
                             mpeg2toh264Player.removeEventListener('progress', updateProgress);
                             mpeg2toh264Player.removeEventListener('workers', updateWorkers);
                             this.infoPanel.resetMpeg2ToH264();
-                            if (this.plugins.aribb24Caption) {
-                                this.plugins.aribb24Caption.dispose();
-                                delete this.plugins.aribb24Caption;
-                            }
-                            if (this.plugins.aribb24Superimpose) {
-                                this.plugins.aribb24Superimpose.dispose();
-                                delete this.plugins.aribb24Superimpose;
-                            }
+                            this.destroyAribb24();
                             mpeg2toh264Player.destroy();
                             if (this.plugins.mpeg2toh264 === mpeg2toh264Player) {
                                 delete this.plugins.mpeg2toh264;
@@ -1226,12 +1149,6 @@ class DPlayer {
     resize(): void {
         if (this.danmaku) {
             this.danmaku.resize();
-        }
-        if (this.plugins.aribb24Caption) {
-            this.plugins.aribb24Caption.refresh();
-        }
-        if (this.plugins.aribb24Superimpose) {
-            this.plugins.aribb24Superimpose.refresh();
         }
         if (this.controller.thumbnails) {
             const thumbnailsConfig = this.options.video.thumbnails;

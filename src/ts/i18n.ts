@@ -132,6 +132,9 @@ const tranTxt = {
         'Video info': '影片統計訊息',
     },
     'ja-jp': {
+        'ARIB caption Worker failed; main-thread rendering resumed.': '字幕の Worker 描画が停止したため、メインスレッドで再開しました。',
+        'Error: ARIB captions could not be restored.': 'エラー: 字幕を復元できませんでした。',
+        'Error: ARIB captions could not be initialized.': 'エラー: 字幕を初期化できませんでした。',
         'Danmaku is loading': 'コメントを読み込み中…',
         'Top': '上固定',
         'Bottom': '下固定',
