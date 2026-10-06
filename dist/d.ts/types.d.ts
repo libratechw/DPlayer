@@ -3,7 +3,8 @@ import Mpegts from 'mpegts.js';
 import FlvJs from 'flv.js';
 import * as dashjs from 'dashjs';
 import WebTorrent from 'webtorrent';
-import * as aribb24js from 'aribb24.js';
+import type Aribb24Track from './aribb24';
+import type { Aribb24Options } from './aribb24';
 import type { Mpeg2TsPlayer, Mpeg2TsPlayerOptions } from 'mpeg2toh264/player';
 import type { Deinterlacer } from 'mpeg2toh264/yadif';
 import DPlayer from './player';
@@ -15,7 +16,7 @@ export type AudioChannel = 'primary' | 'secondary';
 export type SubtitleType = 'webvtt' | 'aribb24';
 export type Events = VideoEvents | PlayerEvents;
 export type VideoEvents = 'abort' | 'canplay' | 'canplaythrough' | 'durationchange' | 'emptied' | 'ended' | 'error' | 'loadeddata' | 'loadedmetadata' | 'loadstart' | 'mozaudioavailable' | 'pause' | 'play' | 'playing' | 'progress' | 'ratechange' | 'seeked' | 'seeking' | 'stalled' | 'suspend' | 'timeupdate' | 'volumechange' | 'waiting';
-export type PlayerEvents = 'screenshot' | 'thumbnails_show' | 'thumbnails_hide' | 'danmaku_show' | 'danmaku_hide' | 'danmaku_clear' | 'danmaku_load_start' | 'danmaku_load_end' | 'danmaku_send' | 'danmaku_opacity' | 'contextmenu_show' | 'contextmenu_hide' | 'notice_show' | 'notice_hide' | 'quality_start' | 'quality_end' | 'destroy' | 'resize' | 'fullscreen' | 'fullscreen_cancel' | 'webfullscreen' | 'webfullscreen_cancel' | 'subtitle_show' | 'subtitle_hide' | 'subtitle_change';
+export type PlayerEvents = 'screenshot' | 'thumbnails_show' | 'thumbnails_hide' | 'danmaku_show' | 'danmaku_hide' | 'danmaku_clear' | 'danmaku_load_start' | 'danmaku_load_end' | 'danmaku_send' | 'danmaku_opacity' | 'contextmenu_show' | 'contextmenu_hide' | 'notice_show' | 'notice_hide' | 'quality_start' | 'quality_end' | 'destroy' | 'resize' | 'fullscreen' | 'fullscreen_cancel' | 'webfullscreen' | 'webfullscreen_cancel' | 'subtitle_show' | 'subtitle_hide' | 'subtitle_change' | 'subtitle_error' | 'subtitle_renderer_fallback';
 export type DanmakuType = 'top' | 'right' | 'bottom';
 export type DanmakuSize = 'big' | 'medium' | 'small';
 export type FullscreenType = 'browser' | 'web';
@@ -353,9 +354,7 @@ export interface PluginOptions {
     };
     dash?: dashjs.MediaPlayerSettingClass;
     webtorrent?: WebTorrent.Options;
-    aribb24?: aribb24js.CanvasRendererOption & {
-        disableSuperimposeRenderer?: boolean;
-    };
+    aribb24?: Aribb24Options;
 }
 export interface WindowExtend extends Window {
     dashjs?: typeof dashjs;
@@ -445,8 +444,8 @@ export interface Plugins {
     flvjs?: FlvJs.Player;
     dash?: dashjs.MediaPlayerClass;
     webtorrent?: WebTorrent.Instance;
-    aribb24Caption?: aribb24js.CanvasRenderer;
-    aribb24Superimpose?: aribb24js.CanvasRenderer;
+    aribb24Caption?: Aribb24Track;
+    aribb24Superimpose?: Aribb24Track;
 }
 export interface APIBackendReadOptions {
     url?: string;

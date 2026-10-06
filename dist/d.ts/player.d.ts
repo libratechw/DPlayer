@@ -108,6 +108,10 @@ declare class DPlayer {
         pic?: string;
     }, danmakuAPI?: DPlayerType.Danmaku | boolean, remember?: boolean, apiBackend?: DPlayerType.APIBackend): void;
     initDanmaku(danmakuAPI?: DPlayerType.Danmaku | boolean, apiBackend?: DPlayerType.APIBackend): void;
+    private initAribb24;
+    private destroyAribb24;
+    private feedAribb24ID3;
+    private feedAribb24B24;
     initMSE(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void;
     initVideo(video: HTMLVideoElement, type: DPlayerType.VideoType | string): void;
     /**
